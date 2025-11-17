@@ -447,6 +447,7 @@ public class PushMfaResource {
         String accessTokenString = requireAccessToken(headers);
         AccessToken accessToken = authenticateAccessToken(accessTokenString);
         String proof = requireDpopProof(headers);
+        TokenLogHelper.logJwt("dpop-proof", proof);
         JWSInput dpop;
         try {
             dpop = new JWSInput(proof);
