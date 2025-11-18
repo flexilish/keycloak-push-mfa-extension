@@ -51,8 +51,6 @@ class PushCredentialServiceTest {
             "ios",
             "push-token",
             "log",
-            null,
-            null,
             "pseudo",
             "device-1");
         CredentialModel result = PushCredentialService.createCredential(user, "Demo Device", data);
@@ -75,8 +73,6 @@ class PushCredentialServiceTest {
             "ios",
             "token-1",
             "log",
-            null,
-            null,
             "pseudo",
             "device");
         CredentialModel model = new CredentialModel();
@@ -95,8 +91,6 @@ class PushCredentialServiceTest {
             "ios",
             "token-2",
             "log",
-            null,
-            null,
             "pseudo",
             "device");
         CredentialModel model = new CredentialModel();

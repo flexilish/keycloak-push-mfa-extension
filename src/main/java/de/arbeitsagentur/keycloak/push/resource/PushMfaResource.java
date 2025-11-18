@@ -174,8 +174,6 @@ public class PushMfaResource {
             deviceType,
             pushProviderId,
             pushProviderType,
-            null,
-            null,
             pseudonymousUserId,
             deviceId);
         CredentialModel credentialModel = PushCredentialService.createCredential(user, label, data);
@@ -338,8 +336,6 @@ public class PushMfaResource {
             current.getDeviceType(),
             pushProviderId,
             pushProviderType,
-            null,
-            null,
             current.getPseudonymousUserId(),
             current.getDeviceId());
         PushCredentialService.updateCredential(device.user(), device.credential(), updated);
@@ -371,8 +367,6 @@ public class PushMfaResource {
             current.getDeviceType(),
             current.getPushProviderId(),
             current.getPushProviderType(),
-            null,
-            null,
             current.getPseudonymousUserId(),
             current.getDeviceId());
         PushCredentialService.updateCredential(device.user(), device.credential(), updated);

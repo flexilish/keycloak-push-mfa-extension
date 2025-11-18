@@ -22,15 +22,13 @@ public class PushCredentialData {
                               @JsonProperty("deviceType") String deviceType,
                               @JsonProperty("pushProviderId") String pushProviderId,
                               @JsonProperty("pushProviderType") String pushProviderType,
-                              @JsonProperty("pushRegistrationToken") String legacyPushRegistrationToken,
-                              @JsonProperty("firebaseId") String legacyFirebaseId,
                               @JsonProperty("pseudonymousUserId") String pseudonymousUserId,
                               @JsonProperty("deviceId") String deviceId) {
         this.publicKeyJwk = publicKeyJwk;
         this.algorithm = algorithm;
         this.createdAt = createdAt;
         this.deviceType = deviceType;
-        this.pushProviderId = firstNonNull(pushProviderId, legacyPushRegistrationToken, legacyFirebaseId);
+        this.pushProviderId = pushProviderId;
         this.pushProviderType = (pushProviderType == null || pushProviderType.isBlank())
             ? PushMfaConstants.DEFAULT_PUSH_PROVIDER_TYPE
             : pushProviderType;
@@ -68,17 +66,5 @@ public class PushCredentialData {
 
     public String getDeviceId() {
         return deviceId;
-    }
-
-    private static String firstNonNull(String... values) {
-        if (values == null) {
-            return null;
-        }
-        for (String value : values) {
-            if (value != null && !value.isBlank()) {
-                return value;
-            }
-        }
-        return null;
     }
 }
