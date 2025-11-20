@@ -37,7 +37,7 @@ public final class PushEnrollmentTokenBuilder {
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("iss", issuer.toString());
-        payload.put("aud", "push-mfa");
+        payload.put("aud", realm.getName());
         payload.put("sub", user.getId());
         payload.put("username", user.getUsername());
         payload.put("realm", realm.getName());

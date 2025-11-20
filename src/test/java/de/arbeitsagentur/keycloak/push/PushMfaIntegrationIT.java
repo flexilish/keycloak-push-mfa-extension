@@ -33,7 +33,7 @@ public class PushMfaIntegrationIT {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Path EXTENSION_JAR = locateProviderJar();
     private static final Path REALM_FILE =
-            Paths.get("config", "push-mfa-realm.json").toAbsolutePath();
+            Paths.get("config", "demo-realm.json").toAbsolutePath();
     private static final String TEST_USERNAME = "test";
 
     @Container
@@ -41,8 +41,7 @@ public class PushMfaIntegrationIT {
             .withExposedPorts(8080)
             .withCopyFileToContainer(
                     MountableFile.forHostPath(EXTENSION_JAR), "/opt/keycloak/providers/keycloak-push-mfa.jar")
-            .withCopyFileToContainer(
-                    MountableFile.forHostPath(REALM_FILE), "/opt/keycloak/data/import/push-mfa-realm.json")
+            .withCopyFileToContainer(MountableFile.forHostPath(REALM_FILE), "/opt/keycloak/data/import/demo-realm.json")
             .withEnv("KEYCLOAK_ADMIN", "admin")
             .withEnv("KEYCLOAK_ADMIN_PASSWORD", "admin")
             .withCommand(

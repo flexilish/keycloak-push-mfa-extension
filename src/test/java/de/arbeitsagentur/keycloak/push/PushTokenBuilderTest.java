@@ -45,7 +45,7 @@ class PushTokenBuilderTest {
         Mockito.when(keyManager.getActiveKey(
                         Mockito.any(), Mockito.eq(KeyUse.SIG), Mockito.eq(Algorithm.RS256.toString())))
                 .thenReturn(keyWrapper);
-        Mockito.when(realm.getName()).thenReturn("push-mfa");
+        Mockito.when(realm.getName()).thenReturn("demo");
     }
 
     @Test
@@ -64,7 +64,7 @@ class PushTokenBuilderTest {
         assertEquals("device-alias", claims.getSubject());
         assertEquals("challenge-123", claims.getStringClaim("cid"));
         assertEquals("test-client", claims.getStringClaim("client_id"));
-        assertEquals("http://localhost:8080/realms/push-mfa", claims.getIssuer());
+        assertEquals("http://localhost:8080/realms/demo", claims.getIssuer());
         assertEquals(PushMfaConstants.PUSH_MESSAGE_TYPE, claims.getIntegerClaim("typ"));
         assertEquals(PushMfaConstants.PUSH_MESSAGE_VERSION, claims.getIntegerClaim("ver"));
         assertEquals(Date.from(Instant.ofEpochSecond(1700000100)), claims.getExpirationTime());
@@ -123,10 +123,10 @@ class PushTokenBuilderTest {
 
         assertEquals("user-id", claims.getSubject());
         assertEquals("demo-user", claims.getStringClaim("username"));
-        assertEquals("push-mfa", claims.getStringClaim("realm"));
+        assertEquals("demo", claims.getStringClaim("realm"));
         assertEquals("challenge-abc", claims.getStringClaim("enrollmentId"));
         assertEquals(PushChallengeStore.encodeNonce(nonce), claims.getStringClaim("nonce"));
-        assertEquals("push-mfa", claims.getAudience().get(0));
+        assertEquals("demo", claims.getAudience().get(0));
         assertEquals(Date.from(Instant.ofEpochSecond(1700000200)), claims.getExpirationTime());
         assertNotNull(claims.getIssueTime());
         assertEquals("push-enroll-challenge", claims.getStringClaim("typ"));
