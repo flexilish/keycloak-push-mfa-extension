@@ -12,13 +12,14 @@ import {
     KeyLike,
     importPKCS8,
     importSPKI,
+    base64url
 } from 'jose';
 
 
 import {getKeyPair} from "./model/keys";
 import {getView} from "./view";
-import {postEnrollComplete, postConfirmLoginAccessToken} from "./service/http-util";
-import {TOKEN_ENDPOINT} from "./service/urls";
+import {postEnrollComplete, postConfirmLoginAccessToken, postChallengesResponse} from "./service/http-util";
+import {CHALLENGE_URL, TOKEN_ENDPOINT} from "./service/urls";
 
 const app = express();
 app.use(bodyParser.json());
@@ -33,6 +34,8 @@ const DEVICE_KEY_TYPE = (process.env.DEVICE_KEY_TYPE ?? 'RSA').toUpperCase();
 const DEVICE_EC_CURVE = (process.env.DEVICE_EC_CURVE ?? 'P-256').toUpperCase();
 const DEVICE_LABEL = process.env.DEVICE_LABEL ?? 'Demo Phone';
 const PORT = Number(process.env.PORT ?? 3001);
+const DEVICE_STATIC_ID = `device-static-id`;
+const ALG_RS256 = 'RS256';
 
 type DpopPayload = {
     htm?: string;
@@ -42,7 +45,7 @@ type DpopPayload = {
 };
 
 function defaultAlg(): string {
-    if (DEVICE_KEY_TYPE === 'RSA') return process.env.DEVICE_SIGNING_ALG?.toUpperCase() ?? 'RS256';
+    if (DEVICE_KEY_TYPE === 'RSA') return process.env.DEVICE_SIGNING_ALG?.toUpperCase() ?? ALG_RS256;
     if (DEVICE_KEY_TYPE === 'EC') {
         const map: Record<string, { alg: string; crv: string }> = {
             'P-256': { alg: 'ES256', crv: 'P-256' },
@@ -58,7 +61,7 @@ function defaultAlg(): string {
 
 function validateAlg(alg: string) {
     if (DEVICE_KEY_TYPE === 'RSA') {
-        if (!['RS256', 'RS384', 'RS512'].includes(alg)) {
+        if (![ALG_RS256, 'RS384', 'RS512'].includes(alg)) {
             throw new Error(`Unsupported DEVICE_SIGNING_ALG '${alg}' for RSA (use RS256/RS384/RS512)`);
         }
     } else if (DEVICE_KEY_TYPE === 'EC') {
@@ -80,13 +83,13 @@ function validateAlg(alg: string) {
 async function createDpopProof(dpopPayload: DpopPayload) {
     const { privateKeyString, publicKeyString } = getKeyPair();
 
-    const  privateKey =  await importPKCS8(privateKeyString, 'RS256');
-    const publicKey =  await importSPKI(publicKeyString, 'RS256');
+    const  privateKey =  await importPKCS8(privateKeyString, ALG_RS256);
+    const publicKey =  await importSPKI(publicKeyString, ALG_RS256);
 
     const jwkPub = await exportJWK(publicKey);
 
     return await new SignJWT(dpopPayload)
-        .setProtectedHeader({ alg: 'RS256', typ: 'dpop+jwt', jwk: jwkPub })
+        .setProtectedHeader({ alg: ALG_RS256, typ: 'dpop+jwt', jwk: jwkPub })
         .setIssuedAt()
         .setJti(uuidv4())
         .sign(privateKey)
@@ -97,8 +100,8 @@ async function keyPairForDevice(alg: string): Promise<{ privateKey: KeyLike; pub
     if (DEVICE_KEY_TYPE === 'RSA') {
         const { privateKeyString, publicKeyString } = getKeyPair();
 
-        const  privateKey =  await importPKCS8(privateKeyString, 'RS256');
-        const publicKey =  await importSPKI(publicKeyString, 'RS256');
+        const  privateKey =  await importPKCS8(privateKeyString, ALG_RS256);
+        const publicKey =  await importSPKI(publicKeyString, ALG_RS256);
 
         const jwkPub = await exportJWK(publicKey);
 
@@ -122,31 +125,68 @@ app.post('/confirm-login', async (req, res) => {
         if (!token) return res.status(400).json({ error: 'token required' });
 
         const confirmPayload = decodeJwt(token);
-        const challengeId = confirmPayload['cid'];
+        const challengeId = confirmPayload['cid'] as string;
         const userId = confirmPayload['sub'] as string;
-        const deviceId = confirmPayload['deviceId'] as string;
 
         const index = "device-alias-".length;
 
         const ekid = userId?.slice(index) as string;
 
-        const dpopPayload : DpopPayload = {
+        const dpopTokenPayload : DpopPayload = {
             htm: 'POST',
             htu: TOKEN_ENDPOINT,
             sub: ekid,
-            deviceId: deviceId
+            deviceId: DEVICE_STATIC_ID
         }
 
-        const dPop = await createDpopProof(dpopPayload);
-        const response = await postConfirmLoginAccessToken(dPop);
+        const dPopToken = await createDpopProof(dpopTokenPayload);
+        const tokenResponse = await postConfirmLoginAccessToken(dPopToken);
 
-        if (!response.ok) {
-            throw new Error(`HTTP ${res.status}: ${await response.text()}`);
+        if (!tokenResponse.ok) {
+            throw new Error(`HTTP ${res.status}: ${await tokenResponse.text()}`);
+        }
+
+        const url = CHALLENGE_URL.replace('CHALLENGE_ID', challengeId);
+
+        const dpopChallengePayload : DpopPayload = {
+            htm: 'POST',
+            htu: url,
+            sub: ekid,
+            deviceId: DEVICE_STATIC_ID
+        }
+
+        const dpopChallengeToken = await createDpopProof(dpopChallengePayload);
+
+        let accessToken = await tokenResponse.text();
+        const PSEUDONYMOUS_ID = process.env.PSEUDONYMOUS_ID ?? `device-alias-${userId}`;
+
+        const body :any = {
+            cid: challengeId,
+            credId: PSEUDONYMOUS_ID,
+            deviceId: DEVICE_STATIC_ID,
+            action: 'approve'
+        }
+
+        const signedToken = await signPayload(body);
+        const challangeResponse = await postChallengesResponse(url, dpopChallengeToken, accessToken, base64url.encode(signedToken))
+
+        if (!challangeResponse.ok) {
+            throw new Error(`HTTP ${res.status}: ${await challangeResponse.text()}`);
         }
     } catch (e: any) {
         res.status(500).json({ error: e.message ?? 'internal error' });
     }
 });
+
+async function signPayload(payload: any) {
+    const exp = Math.floor(Date.now() / 1000) + 300;
+    const { privateKey } = await keyPairForDevice(ALG_RS256);
+
+    return await new SignJWT(payload)
+        .setProtectedHeader({ alg: ALG_RS256, kid: 'DEVICE_KEY_ID', typ: 'JWT' })
+        .setExpirationTime(exp)
+        .sign(privateKey);
+}
 
 app.post('/enroll', async (req, res) => {
     try {
@@ -164,14 +204,14 @@ app.post('/enroll', async (req, res) => {
 
         // Generate ids (pseudonymous id, device, key id)
         const PSEUDONYMOUS_ID = process.env.PSEUDONYMOUS_ID ?? `device-alias-${USER_ID}`;
-        const DEVICE_ID = process.env.DEVICE_ID ?? `device-${uuidv4()}`;
+
         const DEVICE_KEY_ID = process.env.DEVICE_KEY_ID ?? `device-key-${uuidv4()}`;
         // TODO impl defaultAlg()
-        const signingAlg = 'RS256';
+        const signingAlg = ALG_RS256;
         validateAlg(signingAlg);
 
         // Generate key pair and public JWK
-        const { privateKey, publicKey, jwkPub } = await keyPairForDevice(signingAlg);
+        const { privateKey, jwkPub } = await keyPairForDevice(signingAlg);
         jwkPub.kid = DEVICE_KEY_ID;
 
         // Build enrollment response JWT
@@ -185,12 +225,11 @@ app.post('/enroll', async (req, res) => {
             deviceType: DEVICE_TYPE,
             pushProviderId: PUSH_PROVIDER_ID,
             pushProviderType: PUSH_PROVIDER_TYPE,
-            pseudonymousUserId: PSEUDONYMOUS_ID,
-            deviceId: DEVICE_ID,
+            credentialId: PSEUDONYMOUS_ID,
+            deviceId: DEVICE_STATIC_ID,
             deviceLabel: DEVICE_LABEL,
             cnf
-        })
-            .setProtectedHeader({ alg: signingAlg, kid: DEVICE_KEY_ID, typ: 'JWT' })
+        }).setProtectedHeader({ alg: signingAlg, kid: DEVICE_KEY_ID, typ: 'JWT' })
             .setExpirationTime(exp)
             .sign(privateKey);
 
