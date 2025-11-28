@@ -11,8 +11,7 @@ import {
     JWK,
     KeyLike,
     importPKCS8,
-    importSPKI,
-    base64url
+    importSPKI
 } from 'jose';
 
 
@@ -157,18 +156,18 @@ app.post('/confirm-login', async (req, res) => {
 
         const dpopChallengeToken = await createDpopProof(dpopChallengePayload);
 
-        let accessToken = await tokenResponse.text();
-        const PSEUDONYMOUS_ID = process.env.PSEUDONYMOUS_ID ?? `device-alias-${userId}`;
+        let accessTokenJson = await tokenResponse.json();
+        let accessToken = accessTokenJson['access_token'];
 
         const body :any = {
             cid: challengeId,
-            credId: PSEUDONYMOUS_ID,
+            credId: userId,
             deviceId: DEVICE_STATIC_ID,
             action: 'approve'
         }
 
         const signedToken = await signPayload(body);
-        const challangeResponse = await postChallengesResponse(url, dpopChallengeToken, accessToken, base64url.encode(signedToken))
+        const challangeResponse = await postChallengesResponse(url, dpopChallengeToken, accessToken, signedToken)
 
         if (!challangeResponse.ok) {
             throw new Error(`HTTP ${res.status}: ${await challangeResponse.text()}`);
@@ -182,8 +181,9 @@ async function signPayload(payload: any) {
     const exp = Math.floor(Date.now() / 1000) + 300;
     const { privateKey } = await keyPairForDevice(ALG_RS256);
 
+    let protectedHeader = { alg: ALG_RS256, kid: 'DEVICE_KEY_ID', typ: 'JWT' };
     return await new SignJWT(payload)
-        .setProtectedHeader({ alg: ALG_RS256, kid: 'DEVICE_KEY_ID', typ: 'JWT' })
+        .setProtectedHeader(protectedHeader)
         .setExpirationTime(exp)
         .sign(privateKey);
 }
