@@ -200,8 +200,8 @@ sequenceDiagram
 - **Enrollment token / QR:** Keycloak signs the `enrollmentToken` with the realm key and encodes `sub`, `enrollmentId`, `nonce`, and `exp` in the QR. The app should verify the signature against `/realms/demo/protocol/openid-connect/certs` plus issuer/audience/expiry before using it.
 - **Complete enrollment (`POST /realms/demo/push-mfa/enroll/complete`):** The server ensures the challenge exists, belongs to the user, and is still `PENDING`, checks `exp` and nonce, requires a supported algorithm and `cnf.jwk`, enforces header/`cnf` algorithm compatibility, and verifies the JWT signature with the posted JWK before persisting the credential id and optional `deviceId`.
 - **Confirm token + SSE:** Each login creates a fresh challenge and confirm token signed by the realm key containing only the credential id, `cid`, client id/name, and `exp`. SSE watchers for enrollment/login require the per-challenge `watchSecret` and abort on missing/mismatched secrets or the wrong challenge type before streaming status.
-- **DPoP-protected API calls (`/login/pending`, `/login/challenges/{cid}/respond`, `/device/*`):** Keycloak re-verifies the access token, confirms the `cnf.jkt` thumbprint matches the stored JWK, checks the DPoP proof `htm`/`htu`, ensures `iat` is within ±120 seconds, and requires `sub` + `deviceId` to match a stored credential (enforcing the credential’s algorithm) before accepting the request-level DPoP signature.
-- **Login approval JWT (`POST /realms/demo/push-mfa/login/challenges/{cid}/respond` body):** After DPoP auth, the login token must match the challenge id, pass signature/`exp` checks against the stored key, carry the correct `credId`, use the expected algorithm, and declare `action` as `approve` or `deny`. If the challenge is bound to a specific credential id, mismatched devices are rejected.
+- **DPoP-protected API calls (`/login/pending`, `/login/challenges/{cid}/respond`, `/device/*`):** Keycloak re-verifies the access token, confirms the `cnf.jkt` thumbprint matches the stored JWK, checks the DPoP proof `htm`/`htu`, ensures `iat` is within ±120 seconds, and requires `sub` + `deviceId` to match a stored credential (enforcing the algorithm declared in the JWK) before accepting the request-level DPoP signature.
+- **Login approval JWT (`POST /realms/demo/push-mfa/login/challenges/{cid}/respond` body):** After DPoP auth, the login token must match the challenge id, pass signature/`exp` checks against the stored key, carry the correct `credId`, use an algorithm compatible with the stored JWK, and declare `action` as `approve` or `deny`. If the challenge is bound to a specific credential id, mismatched devices are rejected.
 
 ## DPoP Authentication
 
@@ -309,7 +309,7 @@ Content-Type: application/json
 }
 ```
 
-Keycloak verifies the signature using `cnf.jwk`, persists the credential (JWK, algorithm, deviceType, `pushProviderId`, `pushProviderType`, credentialId, deviceId, deviceLabel), and resolves the enrollment challenge. The `pushProviderId` value is whatever identifier your push backend requires (for example an FCM registration token or an APNs device token), while `pushProviderType` selects the Keycloak `PushNotificationSender` provider that should deliver the confirm token. The bundled logging implementation exposes the type `log`, which simply prints the payload. Your scripts use `pushProviderType=log` by default, but real deployments can plug in any provider via the [Push Notification SPI](#push-notification-spi). The `deviceLabel` is read from the JWT payload (falls back to `PushMfaConstants.USER_CREDENTIAL_DISPLAY_NAME` when absent).
+Keycloak verifies the signature using `cnf.jwk`, persists the credential (JWK, deviceType, `pushProviderId`, `pushProviderType`, credentialId, deviceId, deviceLabel), and resolves the enrollment challenge. The `pushProviderId` value is whatever identifier your push backend requires (for example an FCM registration token or an APNs device token), while `pushProviderType` selects the Keycloak `PushNotificationSender` provider that should deliver the confirm token. The bundled logging implementation exposes the type `log`, which simply prints the payload. Your scripts use `pushProviderType=log` by default, but real deployments can plug in any provider via the [Push Notification SPI](#push-notification-spi). The `deviceLabel` is read from the JWT payload (falls back to `PushMfaConstants.USER_CREDENTIAL_DISPLAY_NAME` when absent).
 
 ```json
 {
@@ -398,12 +398,11 @@ Content-Type: application/json
     "alg": "RS256",
     "use": "sig",
     "kid": "user-key-rotated"
-  },
-  "algorithm": "RS256"
+  }
 }
 ```
 
-The DPoP proof must be signed with the *existing* user key. After validation, Keycloak swaps the stored JWK/algorithm (and updates the credential timestamp). The response is `{ "status": "rotated" }`. Future API calls must be signed with the newly-installed key.
+The DPoP proof must be signed with the *existing* user key. After validation, Keycloak swaps the stored JWK (and updates the credential timestamp). The response is `{ "status": "rotated" }`. Future API calls must be signed with the newly-installed key.
 
 > Demo helper: `scripts/rotate-user-key.sh <credential-id>`
 
@@ -414,7 +413,7 @@ The repository includes thin shell wrappers that simulate a device:
 - `scripts/enroll.sh <enrollment-token>` decodes the QR payload, generates a key pair (RSA or EC), and completes enrollment.
 - `scripts/confirm-login.sh <confirm-token>` decodes the Firebase-style payload, lists pending challenges (for demo visibility), and approves/denies the challenge.
 - `scripts/update-push-provider.sh <credential-id> <provider-id> [provider-type]` updates the stored push provider metadata (defaults to the `log` provider used in this demo).
-- `scripts/rotate-user-key.sh <credential-id>` rotates the user key material and immediately persists the new JWK/algorithm.
+- `scripts/rotate-user-key.sh <credential-id>` rotates the user key material and immediately persists the new JWK.
 
 All scripts source `scripts/common.sh`, which centralizes base64 helpers, compact-JWS signing, DPoP proof creation, and token acquisition. The helper expects `scripts/sign_jws.py` to exist (or `COMMON_SIGN_JWS` to point to a compatible signer), so replacing the demo logic with a real implementation only requires swapping in a different signer.
 
@@ -437,14 +436,14 @@ All scripts source `scripts/common.sh`, which centralizes base64 helpers, compac
 
 - **Realm verification:** Enrollment starts when the app scans the QR code and reads `enrollmentToken`. Verify the JWT with the realm JWKS (`/realms/demo/protocol/openid-connect/certs`) before trusting its contents.
 - **User key material:** Generate a key pair per user (or per device if you let a user enroll more than one), select a unique `kid`, and keep the private key in secure storage. Persist and exchange the public component exclusively as a JWK (the same document posted in `cnf.jwk`). With a single device per user you can reuse a stable `deviceId`; only multi-device setups need distinct ids.
-- **Algorithm choice:** The demo scripts default to RSA/RS256 but also support EC keys and ECDSA proofs—set `DEVICE_KEY_TYPE=EC`, pick a curve via `DEVICE_EC_CURVE` (P-256/384/521), and override `DEVICE_SIGNING_ALG` if you need ES256/384/512. The selected algorithm is stored with the credential so Keycloak enforces it for all future DPoP proofs, login approvals, and rotation requests.
+- **Algorithm choice:** The demo scripts default to RSA/RS256 but also support EC keys and ECDSA proofs—set `DEVICE_KEY_TYPE=EC`, pick a curve via `DEVICE_EC_CURVE` (P-256/384/521), and override `DEVICE_SIGNING_ALG` if you need ES256/384/512. The selected algorithm lives in the stored JWK so Keycloak enforces it for all future DPoP proofs, login approvals, and rotation requests.
 - **State to store locally:** credential id ↔ real Keycloak user id mapping, the user key pair, the `kid`, `deviceType`, `pushProviderId`, `pushProviderType`, preferred `deviceLabel`, and any metadata needed to post to Keycloak again. Track a `deviceId` only when you support multiple devices per user.
 - **Confirm token handling:** When the confirm token arrives through Firebase (or when the user copies it from the waiting UI), decode the JWT, extract `cid` and `credId`, and either call `/push-mfa/login/pending` (optional) or immediately sign the login approval JWT and post it to `/push-mfa/login/challenges/{cid}/respond`. Use the optional `client_name` claim (when present) to display a friendly app label.
 - **Pending challenge discovery:** Before calling `/push-mfa/login/pending`, build a DPoP proof that includes the HTTP method (`htm`), full URL (`htu`), `sub`, `deviceId`, `iat`, and a fresh `jti`, and send it via the `DPoP` header so Keycloak can scope the response to that physical device. The response lists each pending challenge with `clientId` and `clientName`.
 - **Access tokens:** Obtain a short-lived access token via the realm’s token endpoint using the device client credentials. The token request itself must include a DPoP proof, and each subsequent REST call must send `Authorization: DPoP <access-token>` alongside a fresh `DPoP` header signed with the same key.
 - **Request authentication:** Every REST call (aside from enrollment, which already embeds the user key) must include a DPoP proof signed with the current user key. The proof binds the request method and URL to the hardware-backed key, making replay or reverse-engineering of a shared client secret ineffective.
 - **Error handling:** Enrollment and login requests return structured error responses (`400`, `403`, or `404`) when the JWTs are invalid, expired, or mismatched. Surface those errors to the user to re-trigger the flow if necessary.
-- **Key rotation / push provider changes:** Use the `/device/push-provider` and `/device/rotate-key` endpoints (described above) to update the stored metadata while authenticating with the current user key. Rotation should generate a fresh key pair, send the public JWK + algorithm, and immediately start using the new key for every subsequent JWT.
+- **Key rotation / push provider changes:** Use the `/device/push-provider` and `/device/rotate-key` endpoints (described above) to update the stored metadata while authenticating with the current user key. Rotation should generate a fresh key pair, send the new public JWK (with the desired `alg`), and immediately start using the new key for every subsequent JWT.
 
 ## Push Notification SPI
 
