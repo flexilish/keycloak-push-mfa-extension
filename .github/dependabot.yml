@@ -12,11 +12,20 @@ updates:
     commit-message:
       prefix: "deps" # to trigger a new release (release-please)
       include: "scope"
+  - package-ecosystem: "npm"
+    directory: "/mock/mobile"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "deps" # to trigger a new release (release-please)
+      include: "scope"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
   - package-ecosystem: "docker-compose"
-    directory: "/"
+    directories: 
+      - "/"
+      - "/loadtest"
     schedule:
       interval: "weekly"
